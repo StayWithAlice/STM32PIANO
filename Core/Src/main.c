@@ -1,325 +1,119 @@
 #include "main.h"
 #include "tim.h"
 #include "gpio.h"
-#include "smg.h"
-#include "led.h"
-#define LO 10 //µÕ“Ù
-#define Md 11 //÷–“Ù
-#define Hi 12 //∏ﬂ“Ù
+#include "OLED.h"
+
 /*
-
-Õ®π˝∏ƒ±‰TIM2µƒ‘§∑÷∆µ÷µ£®Prescaler£©µ˜’˚PWM∆µ¬ 
-≤ªÕ¨“Ù«¯+≤ªÕ¨∞¥º¸∂‘”¶Ãÿ∂®‘§∑÷∆µ÷µ
-’ºø’±»πÃ∂®Œ™50%£®∑¢…˘ ±£©
-∆µ¬ º∆À„π´ Ω£∫f = TIM2_CLK / (Prescaler * Period)
-
-œ‘ æ¬ﬂº≠
- ˝¬Îπ‹£∫
-Œﬁ∞¥º¸ ±£∫œ‘ æµ±«∞“Ù«¯£®L/N/H£©
-”–∞¥º¸ ±£∫œ‘ æµ±«∞“Ù∑˚£®1-7£©
-LED£∫∞¥º¸∞¥œ¬ ±µ„¡¡∂‘”¶LED
-
-”≤º˛¡¨Ω”
-π¶ƒ‹	      GPIO	  Õ‚…Ë
-«Ÿº¸1-7	     PA1-7	  ∞¥º¸
-“Ù«¯«–ªª	   PA8-10	  ∞¥º¸
- ˝¬Îπ‹∂Œ—°	 PB0-7	  7∂Œ ˝¬Îπ‹
-«Ÿº¸÷∏ æµ∆	 PB9-15	  LED
-∑‰√˘∆˜	     TIM2_CH1	PWM ‰≥ˆ
-
+  Á°¨‰ª∂ËøûÊé•Ôºö
+  PA0      -> ËúÇÈ∏£Âô® (TIM2_CH1)
+  PA1 ~ PA7 -> 7‰∏™ÊåâÈîÆ (ÂØπÂ∫îÈü≥Á¨¶ 1-7)
+  PB8      -> OLED SCL
+  PB9      -> OLED SDA
 */
-//  ˝¬Îπ‹œ‘ æ∫Ø ˝…˘√˜
-void DisplayDigit(uint8_t digit);
-//  ˝¬Îπ‹∂Œ¬Î±Ì (0-9, L, N, H)
-uint8_t smg_num[] = {
-    0x3f, // 0
-    0x06, // 1
-    0x5b, // 2
-    0x4f, // 3
-    0x66, // 4
-    0x6d, // 5
-    0x7d, // 6
-    0x07, // 7
-    0x7f, // 8
-    0x6f, // 9
-    0x38, // L (µÕ“Ù)
-    0x37, // N (÷–“Ù)
-    0x76  // H (∏ﬂ“Ù)
+
+uint8_t KEY = 0; // ÂΩìÂâçÊåâ‰∏ãÁöÑÁê¥ÈîÆ (1-7), 0Ë°®Á§∫Ê≤°Êåâ
+
+// ÂÆö‰πâÈü≥Á¨¶ÂØπÂ∫îÁöÑÂî±ÂêçÂ≠óÁ¨¶‰∏≤
+char *NOTE_NAMES[] = {
+    " ",
+    "1 Do ",
+    "2 Re ",
+    "3 Mi ",
+    "4 Fa ",
+    "5 Sol",
+    "6 La ",
+    "7 Si "
 };
 
-uint8_t KEY = 0;// µ±«∞∞¥œ¬µƒ«Ÿº¸ (1-7)
-uint8_t KEY1 = 10;// // µ±«∞“Ù«¯ (ƒ¨»œµÕ“Ù)œ‘ æL
 void SystemClock_Config(void);
 
-/*******************************
- * ∑‰√˘∆˜øÿ÷∆∫Ø ˝
- * π¶ƒ‹£∫
- * 1. ∏˘æ›∞¥º¸◊¥Ã¨øÿ÷∆PWM ‰≥ˆ
- * 2. …Ë÷√≤ªÕ¨“Ù«¯µƒ‘§∑÷∆µ÷µ
- * 3. ∏¸–¬ ˝¬Îπ‹œ‘ æ
- *******************************/
-void speaker()
-{
-	// øÿ÷∆PWM ‰≥ˆ£®”–∞¥º¸ ±50%’ºø’±»£¨Œﬁ∞¥º¸ ±πÿ±’£©
-    if (KEY)
-        __HAL_TIM_SetCompare(&htim2, TIM_CHANNEL_1, 50);// ø™∆Ù…˘“Ù
-    else
-        __HAL_TIM_SetCompare(&htim2, TIM_CHANNEL_1, 0);// πÿ±’…˘“Ù
-// ∏˘æ›“Ù«¯∫Õ∞¥º¸…Ë÷√‘§∑÷∆µ÷µ£®∏ƒ±‰∆µ¬ £©
-    switch (KEY1)
-    {
-    case LO:// µÕ“Ù«¯
-        switch (KEY)
-        {
-        case 1:
-            __HAL_TIM_SET_PRESCALER(&htim2, 302);
-            break;
-/*
-  ±÷” π”√8MHz HSE ≈‰÷√£¨œ¬√Ê « 302 ’‚∏ˆ‘§∑÷∆µ÷µµƒº∆À„‘≠¿Ì£∫
-
-1.  ±÷”≈‰÷√∑÷Œˆ£®SystemClock_Config£©
-RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-RCC_OscInitStruct.HSEState = RCC_HSE_ON;  // Õ‚≤ø 8MHz æß’Ò
-RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL2;  // 8MHz °¡ 2 = 16MHz
-
-RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;  // œµÕ≥ ±÷” = 16MHz
-RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV2;         // AHB = 16MHz/2 = 8MHz
-RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;          // APB1 = 8MHz/2 = 4MHz
-2. TIM2  ±÷”‘¥º∆À„
-STM32 ∂® ±∆˜ ±÷”πÊ‘Ú£∫
-
-APB1 ‘§∑÷∆µ = 2 (°Ÿ1)
-
-°‡ TIM2  ±÷” = APB1  ±÷” °¡ 2 = 4MHz °¡ 2 = 8MHz
-
-TIM2_CLK = 8,000,000 Hz
-
-3. PWM ∆µ¬ º∆À„π´ Ω
-f_pwm = TIM2_CLK / [(PSC + 1) °¡ (ARR + 1)]
-4. ƒø±Í∆µ¬ £∫÷–—Î C (C4)
-±Í◊º∆µ¬ £∫261.63 Hz
-¥˙¬Î¿ÔµÕ“Ù«¯ KEY=1 ∂‘”¶¥À∆µ¬ 
-
-5. 302 µƒº∆À„π˝≥Ã
-‘⁄∂® ±∆˜≈‰÷√÷–£∫
-htim2.Init.Period = 100;  // ARR = 100
-–Ë“™º∆À„ PSC ÷µ£∫
-PSC = (TIM2_CLK / (f_target °¡ (ARR + 1))) - 1
-    = (8,000,000 / (261.63 °¡ 101)) - 1
-    = (8,000,000 / 26,424.63) - 1
-    = 302.82 - 1
-    = 301.82
-		
-*/
-        case 2:
-            __HAL_TIM_SET_PRESCALER(&htim2, 269);
-            break;
-        case 3:
-             __HAL_TIM_SET_PRESCALER(&htim2, 240);
-            break;
-        case 4:
-            __HAL_TIM_SET_PRESCALER(&htim2, 227);
-            break;
-        case 5:
-            __HAL_TIM_SET_PRESCALER(&htim2, 202);
-            break;
-        case 6:
-            __HAL_TIM_SET_PRESCALER(&htim2, 180);
-            break;
-        case 7:
-            __HAL_TIM_SET_PRESCALER(&htim2, 160);
-            break;
-        }
-        break;
-
-    case Md: // ÷–“Ù«¯
-        switch (KEY)
-        {
-        case 1:
-            __HAL_TIM_SET_PRESCALER(&htim2, 152);
-            break;
-        case 2:
-            __HAL_TIM_SET_PRESCALER(&htim2, 136);
-            break;
-        case 3:
-            __HAL_TIM_SET_PRESCALER(&htim2, 121);
-            break;
-        case 4:
-            __HAL_TIM_SET_PRESCALER(&htim2, 114);
-            break;
-        case 5:
-            __HAL_TIM_SET_PRESCALER(&htim2, 102);
-            break;
-        case 6:
-            __HAL_TIM_SET_PRESCALER(&htim2, 90);
-            break;
-        case 7:
-            __HAL_TIM_SET_PRESCALER(&htim2, 80);
-            break;
-        }
-        break;
-
-    case Hi:// ∏ﬂ“Ù«¯
-        switch (KEY)
-        {
-        case 1:
-            __HAL_TIM_SET_PRESCALER(&htim2, 76);
-            break;
-        case 2:
-            __HAL_TIM_SET_PRESCALER(&htim2, 68);
-            break;
-        case 3:
-            __HAL_TIM_SET_PRESCALER(&htim2, 60);
-            break;
-        case 4:
-            __HAL_TIM_SET_PRESCALER(&htim2, 57);
-            break;
-        case 5:
-            __HAL_TIM_SET_PRESCALER(&htim2, 51);
-            break;
-        case 6:
-            __HAL_TIM_SET_PRESCALER(&htim2, 45);
-            break;
-        case 7:
-            __HAL_TIM_SET_PRESCALER(&htim2, 40);
-            break;
-        }
-        break;
-    }
-    uint8_t dat[2];
-    dat[0] = smg_num[KEY];
-    DisplayDigit(dat[0]); 
-}
-/*******************************
- *  ˝¬Îπ‹œ‘ æ∫Ø ˝
- * π¶ƒ‹£∫Õ®π˝GPIOB0-7øÿ÷∆ ˝¬Îπ‹∏˜∂Œ
- * ≤Œ ˝£∫digit - “™œ‘ æµƒ∂Œ¬Î
- *******************************/
-void DisplayDigit(uint8_t digit)
-{
-    // PB0-PB7
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, (digit & 0x01) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, (digit & 0x02) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, (digit & 0x04) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, (digit & 0x08) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_4, (digit & 0x10) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, (digit & 0x20) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, (digit & 0x40) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, (digit & 0x80) ? GPIO_PIN_SET : GPIO_PIN_RESET);
-}
+// speaker ÂáΩÊï∞Â∑≤Âà†Èô§ÔºåÈÄªËæëÁßªÂÖ•‰∏ªÂæ™ÁéØ
 
 int main(void)
 {
-  uint8_t dat[2];  
-	HAL_Init();
+    HAL_Init();
     SystemClock_Config();
     MX_GPIO_Init();
     MX_TIM2_Init();
 
-    HAL_TIM_Base_Start_IT(&htim2);
-    HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-    __HAL_TIM_SetCompare(&htim2, TIM_CHANNEL_1, 0);
-    dat[0] = smg_num[9];
+    // 1. ÂàùÂßãÂåñ OLED
+    OLED_Init(); 
+    
+    // 2. ‰øÆÂ§çÂºïËÑöÊÇ¨Á©∫ÈóÆÈ¢ò (ÂºÄÂêØ‰∏ãÊãâÁîµÈòª)
+    __HAL_RCC_GPIOA_CLK_ENABLE(); 
+    GPIO_InitTypeDef GPIO_FixStruct = {0};
+    GPIO_FixStruct.Pin = GPIO_PIN_1 | GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4 |
+                         GPIO_PIN_5 | GPIO_PIN_6 | GPIO_PIN_7;
+    GPIO_FixStruct.Mode = GPIO_MODE_INPUT;      // ËæìÂÖ•Ê®°Âºè
+    GPIO_FixStruct.Pull = GPIO_PULLDOWN;        // ‰∏ãÊãâ
+    HAL_GPIO_Init(GPIOA, &GPIO_FixStruct);
+    
+    // 3. ÂàùÂßãÂ±èÂπïÊòæÁ§∫
+    OLED_ShowString(1, 1, "STM32 Piano");
+    OLED_ShowString(3, 1, "WAITING...");
 
     while (1)
     {
-			// ºÏ≤‚7∏ˆ«Ÿº¸µƒ∞¥œ¬◊¥Ã¨
-        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1) == GPIO_PIN_SET)
-        {
-            KEY = 1;
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_SET);// µ„¡¡∂‘”¶LED
-            while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1) == GPIO_PIN_SET)
-                speaker(); // ≥÷–¯∑¢…˘
-            KEY = 0;
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, GPIO_PIN_RESET); // πÿ±’LED
-            __HAL_TIM_SetCompare(&htim2, TIM_CHANNEL_1, 0);// Õ£÷π∑¢…˘
-        }
+        KEY = 0; // ÊØèÊ¨°Âæ™ÁéØÂÖàÈáçÁΩÆÊåâÈîÆÁä∂ÊÄÅ
 
-        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_2) == GPIO_PIN_SET)
-        {
-            KEY = 2;
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);
-            while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_2) == GPIO_PIN_SET)
-                speaker();
-            KEY = 0;
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_RESET);
-            __HAL_TIM_SetCompare(&htim2, TIM_CHANNEL_1, 0);
-        }
+        // ËΩÆËØ¢Ê£ÄÊµãÊåâÈîÆ PA1 - PA7
+        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1) == GPIO_PIN_SET) KEY = 1;
+        else if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_2) == GPIO_PIN_SET) KEY = 2;
+        else if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3) == GPIO_PIN_SET) KEY = 3;
+        else if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_4) == GPIO_PIN_SET) KEY = 4;
+        else if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_5) == GPIO_PIN_SET) KEY = 5;
+        else if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6) == GPIO_PIN_SET) KEY = 6;
+        else if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7) == GPIO_PIN_SET) KEY = 7;
 
-        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3) == GPIO_PIN_SET)
+        if (KEY > 0)
         {
-            KEY = 3;
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
-            while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_3) == GPIO_PIN_SET)
-                speaker();
-            KEY = 0;
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_RESET);
-            __HAL_TIM_SetCompare(&htim2, TIM_CHANNEL_1, 0);
-        }
+            // „ÄêÂèëÂ£∞Ê®°Âºè„Äë: ÂøÖÈ°ªÊää PA0 ÈáçÊñ∞ÈÖçÁΩÆ‰∏∫ "Â§çÁî®Êé®ÊåΩ (AF_PP)"
+            GPIO_InitTypeDef GPIO_InitStruct = {0};
+            GPIO_InitStruct.Pin = GPIO_PIN_0;
+            GPIO_InitStruct.Mode = GPIO_MODE_AF_PP; // ÂèòË∫´‰∏∫ÂÆöÊó∂Âô®ÂºïËÑö
+            GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+            HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_4) == GPIO_PIN_SET)
-        {
-            KEY = 4;
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET);
-            while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_4) == GPIO_PIN_SET)
-                speaker();
-            KEY = 0;
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET);
-            __HAL_TIM_SetCompare(&htim2, TIM_CHANNEL_1, 0);
-        }
+            // 1. ÂêØÂä® PWM
+            HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+            __HAL_TIM_SetCompare(&htim2, TIM_CHANNEL_1, 50); // 50% Âç†Á©∫ÊØî
 
-        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_5) == GPIO_PIN_SET)
-        {
-            KEY = 5;
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
-            while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_5) == GPIO_PIN_SET)
-                speaker();
-            KEY = 0;
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
-            __HAL_TIM_SetCompare(&htim2, TIM_CHANNEL_1, 0);
-        }
+            // 2. ÊòæÁ§∫
+            OLED_ShowString(3, 1, "Playing:      ");
+            OLED_ShowString(3, 10, NOTE_NAMES[KEY]);
 
-        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6) == GPIO_PIN_SET)
-        {
-            KEY = 6;
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
-            while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6) == GPIO_PIN_SET)
-                speaker();
-            KEY = 0;
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_RESET);
-            __HAL_TIM_SetCompare(&htim2, TIM_CHANNEL_1, 0);
+            // 3. ËÆæÁΩÆÈ¢ëÁéá
+            switch (KEY)
+            {
+                case 1: __HAL_TIM_SET_PRESCALER(&htim2, 152); break;
+                case 2: __HAL_TIM_SET_PRESCALER(&htim2, 136); break;
+                case 3: __HAL_TIM_SET_PRESCALER(&htim2, 121); break;
+                case 4: __HAL_TIM_SET_PRESCALER(&htim2, 114); break;
+                case 5: __HAL_TIM_SET_PRESCALER(&htim2, 102); break;
+                case 6: __HAL_TIM_SET_PRESCALER(&htim2, 90);  break;
+                case 7: __HAL_TIM_SET_PRESCALER(&htim2, 80);  break;
+            }
+            HAL_Delay(10);
         }
-
-        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7) == GPIO_PIN_SET)
+        else
         {
-            KEY = 7;
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET);
-            while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_7) == GPIO_PIN_SET)
+            // ========================================================
+            // Âº∫Âà∂Êää PA0 ÂèòÊàê "ÊôÆÈÄöÊé®ÊåΩËæìÂá∫ (OUTPUT_PP)"
+            // Âπ∂‰∏îËæìÂá∫ È´òÁîµÂπ≥
+            // ========================================================
+            HAL_TIM_PWM_Stop(&htim2, TIM_CHANNEL_1); // ÂÖàÂÅúÂÆöÊó∂Âô®
+
+            GPIO_InitTypeDef GPIO_InitStruct = {0};
+            GPIO_InitStruct.Pin = GPIO_PIN_0;
+            GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; // ÂèòË∫´‰∏∫ÊôÆÈÄöGPIO
+            GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+            HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+            // ÔºÅÔºÅÔºÅÂÖ≥ÈîÆ‰∏ÄÂáªÔºöÂº∫Âà∂ËæìÂá∫ 1 (3.3V)ÔºÅÔºÅÔºÅ
+            HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, GPIO_PIN_SET); 
             
-						speaker();
-            KEY = 0;
-            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET);
-            __HAL_TIM_SetCompare(&htim2, TIM_CHANNEL_1, 0);
+            OLED_ShowString(3, 1, "WAITING...    ");
         }
-				
- // “Ù«¯«–ªª∞¥≈•ºÏ≤‚
-        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_8) == GPIO_PIN_SET)
-        {
-            KEY1 = 10;//œ‘ æL
-            dat[0] = smg_num[9];
-        }
-        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_9) == GPIO_PIN_SET)
-        {
-            KEY1 = 11;//œ‘ æN
-            dat[0] = smg_num[9];
-        }
-        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
-        {
-            KEY1 = 12;//œ‘ æH
-            dat[0] = smg_num[9];
-        }
-
-        DisplayDigit(smg_num[KEY1 ]);
     }
 }
 
@@ -328,18 +122,21 @@ void SystemClock_Config(void)
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
+  // 1. ÈÖçÁΩÆÊåØËç°Âô® (HSE = 8MHz, PLL = 8 * 2 = 16MHz)
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL2;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL2; // ÈîÅÂÆö‰∏∫ x2 (16MHz)
+  
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
   }
 
+  // 2. ÈÖçÁΩÆÊó∂ÈíüÊ†ë
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
@@ -347,7 +144,10 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  {
+    Error_Handler();
+  }
 }
 
 void Error_Handler(void)
@@ -355,7 +155,6 @@ void Error_Handler(void)
   __disable_irq();
   while (1)
   {
+      // Âè™Ë¶Å‰∏çÂÅöÈîô‰∫ãÔºåËøôÈáåÊ∞∏Ëøú‰∏ç‰ºöË¢´ÊâßË°å
   }
 }
-
-
